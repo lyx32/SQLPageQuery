@@ -176,12 +176,12 @@ if(@fromStartIndex >-1) begin
  
 
  declare @nsql nvarchar(max)
- set @nsql=(SELECT  ';'+sql FROM #sql FOR XML PATH(''))
+ set @nsql=(SELECT  ';'+sql FROM #sql order by idx FOR XML PATH(''))
  set @nsql = replace(replace(replace(@nsql,'[lt]','<'),'[rt]','>'),'[@]','&')
  print @nsql
 
 begin try
-	exec sp_executesql  @nsql
+	exec sp_executesql @nsql
 end try
 begin catch
 	SELECT @ErrorMessage = ERROR_MESSAGE(),@ErrorSeverity = ERROR_SEVERITY(),@ErrorState = ERROR_STATE();
