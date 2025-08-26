@@ -39,14 +39,14 @@ set @sql= replace(@sql,'>','[rt]')
 set @sql= replace(@sql,'&','[@]')
 
   
-create table #sql( idx int not null,sql nvarchar(2000) not null )
+create table #sql( idx int not null,sql nvarchar(4000) not null )
 
 
-SELECT IDENTITY(int,1,1) as idx ,convert(nvarchar(2000),B.val) as sql into #sql2
+SELECT IDENTITY(int,1,1) as idx ,convert(nvarchar(4000),B.val) as sql into #sql2
 FROM (
 	(SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@sql, ';', '</v><v>') + '</v>') ) A 
 OUTER APPLY
-    (SELECT val = N.v.value('.', 'varchar(2000)') FROM A.[value].nodes('/v') N(v) ) B
+    (SELECT val = N.v.value('.', 'varchar(4000)') FROM A.[value].nodes('/v') N(v) ) B
 )
 
 insert into #sql
@@ -57,7 +57,7 @@ delete #sql where len(ltrim(rtrim(sql)))=0
 declare @sqlCount int
 select @sqlCount=count(*) from #sql
 
-declare @sql_item varchar(2000)
+declare @sql_item varchar(4000)
 declare @idx int
  
 select top 1 @sql_item=sql,@idx=idx from #sql order by idx desc
@@ -65,10 +65,10 @@ select top 1 @sql_item=sql,@idx=idx from #sql order by idx desc
 
 declare @fromStartIndex int =0
 declare @whereStartIndex int =0
-declare @temp_sql varchar(2000)=@sql_item
+declare @temp_sql varchar(4000)=@sql_item
 declare @lc int=-999
 declare @rc int=-998
-declare @temp varchar(2000)
+declare @temp varchar(4000)
 declare @k_l int = charindex('(',@temp_sql)
 declare @k_f int = charindex('from',@temp_sql)
 declare @k_r int = charindex(')',@temp_sql)
@@ -83,8 +83,8 @@ if( @k_f > @k_l and @k_l > 0 ) begin
 		if(@lc=-999) begin set @lc=0 end
 		if(@rc=-998) begin set @rc=0 end
 		set @temp = substring( @temp_sql,0,@k_r+1)
-		set @lc = @lc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, '(', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(1000)') FROM A.[value].nodes('/v') N(v) ) B ))
-		set @rc = @rc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, ')', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(1000)') FROM A.[value].nodes('/v') N(v) ) B ))
+		set @lc = @lc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, '(', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(4000)') FROM A.[value].nodes('/v') N(v) ) B ))
+		set @rc = @rc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, ')', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(4000)') FROM A.[value].nodes('/v') N(v) ) B ))
 
 		set @temp_sql= substring( @temp_sql,@k_r+1,  4000)	
 		set @k_l = charindex('(',@temp_sql)
@@ -97,7 +97,6 @@ if( @k_f > @k_l and @k_l > 0 ) begin
 	set @fromStartIndex = charindex('from' ,@temp_sql)-1;
  end
  
-set @temp_sql = @sql_item
 set @k_l = charindex('(',@temp_sql)
 set @k_r = charindex(')',@temp_sql)
 set @k_w = charindex('where',@temp_sql)
@@ -112,9 +111,10 @@ set @rc=-998
 	while(( @lc<>@rc or @k_l < @k_w or @k_r < @k_w) and (@k_l>0 or @k_r>0)) begin
 		if(@lc=-999) begin set @lc=0 end
 		if(@rc=-998) begin set @rc=0 end
+		if(@k_r=0) begin set @k_r=@k_l end
 		set @temp = substring( @temp_sql,0,@k_r+1)
-		set @lc = @lc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, '(', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(1000)') FROM A.[value].nodes('/v') N(v) ) B ))
-		set @rc = @rc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, ')', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(1000)') FROM A.[value].nodes('/v') N(v) ) B ))
+		set @lc = @lc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, '(', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(4000)') FROM A.[value].nodes('/v') N(v) ) B ))
+		set @rc = @rc+(SELECT count(*)-1 FROM ( (SELECT [value] = CONVERT(XML, '<v>' + REPLACE(@temp, ')', '</v><v>') + '</v>') ) A  OUTER APPLY (SELECT val = N.v.value('.', 'varchar(4000)') FROM A.[value].nodes('/v') N(v) ) B ))
 		
 		set @temp_sql= substring( @temp_sql,@k_r+1,  4000)	
 		set @k_l = charindex('(',@temp_sql)
@@ -124,7 +124,11 @@ set @rc=-998
 	 
 	set @whereStartIndex = charindex('where' ,@temp_sql)-1 + len(@sql_item) - len(@temp_sql);
  end else begin
-	set @whereStartIndex = charindex('where' ,@temp_sql)-1;
+	if(len(@temp_sql) = len(@sql_item)) begin
+		set @whereStartIndex = charindex('where' ,@temp_sql) -1;
+	end else begin
+		set @whereStartIndex = @fromStartIndex + charindex('where' ,@temp_sql) - 2;
+	end
  end
 
  
@@ -137,12 +141,12 @@ if(@fromStartIndex >-1) begin
 	if(@whereStartIndex = -1) begin
 		set @whereStartIndex = len(@sql_item)
 	end
-	declare @rawSQLFrom nvarchar(3000)=substring( @sql_item,@fromStartIndex  ,4000)
+	declare @rawSQLFrom nvarchar(4000)=substring( @sql_item,@fromStartIndex  ,4000)
 	set @temp_sql = substring( @sql_item,0,@fromStartIndex )+' into '+@tableName+' '+substring( @sql_item,@fromStartIndex +1 ,@whereStartIndex - @fromStartIndex)+' where 1=2 ';
 	if(len(substring( @sql_item,@whereStartIndex+6  ,4000))>0) begin
 		set @temp_sql = @temp_sql+' and '+substring( @sql_item,@whereStartIndex+6  ,4000)
 	end
-	set @sql_item = substring( @sql_item,0,@fromStartIndex )+' into '+@tableName+' '+substring( @sql_item,@fromStartIndex  ,4000)
+	declare @isReplace varchar(1)='n'
 
 	if(ISNULL(@orderby,'')='') begin
 		set @itemTime=SYSDATETIME()
@@ -158,8 +162,12 @@ if(@fromStartIndex >-1) begin
 
 		if(len(@orderby)=0) begin 
 			set @orderby='N_7777'  
-			set @sql_item=@sql_item+';alter table '+@tableName+' add N_7777 int identity(1,1)';
+			set @isReplace='y'
+			set @sql_item = substring( @sql_item,0,@fromStartIndex )+',IDENTITY(int,1,1) as N_7777 into '+@tableName+' '+substring( @sql_item,@fromStartIndex  ,4000)
 		end
+	end
+	if('n' = @isReplace) begin
+		set @sql_item = substring( @sql_item,0,@fromStartIndex )+' into '+@tableName+' '+substring( @sql_item,@fromStartIndex  ,4000);
 	end
 	update #sql set sql=@sql_item where idx=@idx
 	insert into #sql(idx,sql) values(@idx+1,'select '+convert(nvarchar(10) ,@page)+' as page,'+convert(nvarchar(10) ,@size)+' as size,CEILING(count(*)/convert(float,'+convert(nvarchar(10) ,@size)+')) as allPage,count(*) as allSize from '+@tableName)
