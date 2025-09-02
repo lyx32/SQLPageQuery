@@ -99,6 +99,25 @@ while(@i<=@count) begin
 	 set @i=@i+1;
 end
 
+set @i =1;
+set @count = (select count(*) from #filter)
+if(@count>0) begin
+	while(@i<=@count) begin	 	
+		set @k_o = charindex('--',@sql_item);	
+		select @id=count(*) from #filter where @k_o>=s and @k_o<e and t<>'括号'
+		if(@id=0 and @k_o>0) begin
+			THROW 777777,'不允许出现注释（--）',1
+			return ;
+		end
+		set @i=@i+1;
+	end
+end else begin	
+	set @k_o = charindex('--',@sql_item);
+	if( @k_o>0) begin
+		THROW 777777,'不允许出现注释（--）',1
+		return ;
+	end
+end
 
  
 
