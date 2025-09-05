@@ -38,6 +38,14 @@ set @sql= replace(@sql,'&','[@]')
   
 create table #sql( idx int not null,sql nvarchar(4000) not null )
 
+insert into #sql values(0,@sql)
+if((select count(*) from #sql where sql like '%''%;%''%')>0) begin
+	THROW 777777,'不允许在字符串中出现分号（;）',1
+end
+if((select count(*) from #sql where sql like '%/*%;%*/%')>0) begin
+	THROW 777777,'不允许在注释中出现分号（;）',1
+end
+delete #sql
 
 SELECT IDENTITY(int,1,1) as idx ,convert(nvarchar(4000),B.val) as sql into #sql_tmp
 FROM (
