@@ -4,7 +4,8 @@
 	使用方式：假设传入SQL查询有N个结果集，我会将最后一个查询结果作为要分页的结果进行处理并返回N+1个结果集。
 			我会按照原有sql顺序返回结果集，并再第N个结果集（最终我认为要分页的结果集）前插入一个分页信息结果集（所以是返回N+1个结果集）。
 			如果结果只有一个结果集，也是同理
-	注意事项：如果你传入的@sql参数存在多个结果集，那么每个sql需要用英文分号;进行分割。
+	注意事项：	1.如果你传入的@sql参数存在多个结果集，那么每个sql需要用英文分号;进行分割。
+				2.传入的sql语句分号（;）具有特殊作用，所以sql语句中的''，/ *** /等。不能出现分号（;）否则会导致sql执行异常
 				
 
 	2025-09-02	1.第四版,也是最终版优化（以前是使用into临时表处理的，有很多问题处理起来很麻烦，现在将sql语句的order by 截取出来处理）。
@@ -14,6 +15,7 @@ create procedure [dbo].[PageQuery]
 	@size   int=20,				--每页的大小   
 	@sql   nvarchar(4000)		--要执行的sql语句 
 as   
+
 if(1 = charindex('(',ltrim(@sql))) begin
 	THROW 777777,'执行sql不能用（）包裹',1
 end
@@ -22,14 +24,20 @@ if( len(@sql) > 4000) begin
 	THROW 777777,'sql太长了，弄短点！',1
 end
 
+  
 declare @execTime varchar(30)=SYSDATETIME()
 declare @itemTime varchar(30)
+  
+
   
 set @sql= replace(@sql,'<','[lt]')
 set @sql= replace(@sql,'>','[rt]')
 set @sql= replace(@sql,'&','[@]')
 
+
+  
 create table #sql( idx int not null,sql nvarchar(4000) not null )
+
 
 SELECT IDENTITY(int,1,1) as idx ,convert(nvarchar(4000),B.val) as sql into #sql_tmp
 FROM (
@@ -41,9 +49,10 @@ OUTER APPLY
 insert into #sql
 select idx,sql from #sql_tmp order by idx
 
+
 delete #sql where len(ltrim(rtrim(sql)))=0
-declare @sqlCount int
-select @sqlCount=count(*) from #sql
+
+
 declare @sql_item varchar(4000)
 declare @idx int
  
@@ -58,35 +67,39 @@ create table #filter(id int identity(1,1) primary key not null,t varchar(4),s in
 
 set @itemTime=SYSDATETIME()
 
-declare @k_l int = charindex('/*',@sql_item)
-declare @k_o int = 0
-declare @k_r int = charindex('*/',@sql_item)
+declare @keyword_left int = charindex('/*',@sql_item)
+declare @keyword int = 0
+declare @keyword_right int = charindex('*/',@sql_item)
 
 
-while(@k_l>0) begin
-	insert into #filter(t,s) values('注释',@k_l)
-	set @k_l = charindex('/*',@sql_item,@k_l+2)
+
+
+while(@keyword_left>0) begin
+	insert into #filter(t,s) values('注释',@keyword_left)
+	set @keyword_left = charindex('/*',@sql_item,@keyword_left+2)
 end
-while(@k_r>0) begin
-	update #filter set e=@k_r+2  where t='注释' and s=(select top 1 s from #filter where t='注释' and e is null order by s desc)
-	set @k_r = charindex('*/',@sql_item,@k_r+2)
+while(@keyword_right>0) begin
+	update #filter set e=@keyword_right+2  where t='注释' and s=(select top 1 s from #filter where t='注释' and e is null order by s desc)
+	set @keyword_right = charindex('*/',@sql_item,@keyword_right+2)
 end
-set @k_l= charindex('''',@sql_item)
-while(@k_l>0) begin
-	set @k_r = charindex('''',@sql_item,@k_l+1)+1;
-	insert into #filter(t,s,e) values('字符',@k_l,@k_r)
-	set @k_l = charindex('''',@sql_item,@k_r);
+set @keyword_left= charindex('''',@sql_item)
+while(@keyword_left>0) begin
+	set @keyword_right = charindex('''',@sql_item,@keyword_left+1)+1;
+	insert into #filter(t,s,e) values('字符',@keyword_left,@keyword_right)
+	set @keyword_left = charindex('''',@sql_item,@keyword_right);
 end
-set @k_l= charindex('(',@sql_item)
-while(@k_l>0) begin
-	insert into #filter(t,s) values('括号',@k_l)
-	set @k_l = charindex('(',@sql_item,@k_l+1)
+set @keyword_left= charindex('(',@sql_item)
+while(@keyword_left>0) begin
+	insert into #filter(t,s) values('括号',@keyword_left)
+	set @keyword_left = charindex('(',@sql_item,@keyword_left+1)
 end
-set @k_r= charindex(')',@sql_item)
-while(@k_r>0) begin
-	update #filter set e=@k_r+1  where t='括号' and s=(select top 1 s from #filter where t='括号' and e is null order by s desc)
-	set @k_r = charindex(')',@sql_item,@k_r+1)
+set @keyword_right= charindex(')',@sql_item)
+while(@keyword_right>0) begin
+	update #filter set e=@keyword_right+1  where t='括号' and s=(select top 1 s from #filter where t='括号' and e is null order by s desc)
+	set @keyword_right = charindex(')',@sql_item,@keyword_right+1)
 end
+
+
 
 declare @i int =1;
 declare @count int = (select count(*) from #filter)
@@ -99,41 +112,31 @@ while(@i<=@count) begin
 	 set @i=@i+1;
 end
 
-set @i =1;
-set @count = (select count(*) from #filter)
-if(@count>0) begin
-	while(@i<=@count) begin	 	
-		set @k_o = charindex('--',@sql_item);	
-		select @id=count(*) from #filter where @k_o>=s and @k_o<e and t<>'括号'
-		if(@id=0 and @k_o>0) begin
-			THROW 777777,'不允许出现注释（--）',1
-			return ;
-		end
-		set @i=@i+1;
-	end
-end else begin	
-	set @k_o = charindex('--',@sql_item);
-	if( @k_o>0) begin
+
+set @keyword = charindex('--',@sql_item);
+while(@keyword>0) begin	 	
+	select @id=count(*) from #filter where @keyword>=s and @keyword<e and t<>'括号'
+	if(@id=0 and @keyword>0) begin
 		THROW 777777,'不允许出现注释（--）',1
 		return ;
 	end
+	set @keyword = charindex('--',@sql_item,@keyword+2);	
 end
 
- 
 
-set @k_o = charindex('order by',@sql_item);
- if( @k_o > 0 ) begin	
-	 while(@k_o > 0) begin
-		select @id=id,@s=s,@e=e from #filter where @k_o>=s and @k_o<e
-		if((select count(*) from #filter where @k_o>=s and @k_o<e)=0) begin
+set @keyword = charindex('order by',@sql_item);
+ if( @keyword > 0 ) begin	
+	 while(@keyword > 0) begin
+		select @id=id,@s=s,@e=e from #filter where @keyword>=s and @keyword<e
+		if((select count(*) from #filter where @keyword>=s and @keyword<e)=0) begin
 			set @id=0
 		end
 		if(@e>0 and @s>0 and @id>0) begin
-			set @k_o = charindex('order by',@sql_item,@e+1);	
+			set @keyword = charindex('order by',@sql_item,@e+1);	
 			delete #filter where id=@id
 		end else begin
-			if(charindex('order by',@sql_item,@k_o+1)>0) begin
-				set @k_o = charindex('order by',@sql_item,@k_o+1);
+			if(charindex('order by',@sql_item,@keyword+1)>0) begin
+				set @keyword = charindex('order by',@sql_item,@keyword+1);
 			end else begin
 				break;
 			end
@@ -141,19 +144,14 @@ set @k_o = charindex('order by',@sql_item);
 	 end	
  end
 
-
+ 
 declare @orderStartIndex int =0
-if( @k_o > 0 ) begin
-	set @orderStartIndex=@k_o
+if( @keyword > 0 ) begin
+	set @orderStartIndex=@keyword
 end
  
 print 'order by 解析：'+ convert(varchar(10), datediff( ms, @itemTime,SYSDATETIME()))+'毫秒'
 
-
-DECLARE @logId INT; 
-DECLARE @udtdtm VARCHAR(14) =  FORMAT(getdate(),'yyyyMMddHHmmss');
-
-SET @logId = SCOPE_IDENTITY();
 
 declare @temp_sql varchar(4000)=''
 if(@orderStartIndex >0) begin
@@ -176,10 +174,10 @@ end else begin
 	set @sql_item = @sql_item+' ORDER BY (SELECT 1) offset '+convert(nvarchar(10) ,((@page - 1) * @size))+' row fetch next '+convert(nvarchar(10) ,@size)+' row only'	
 end
 update #sql set sql=@sql_item where idx=@idx
- 
 
-declare @nsql nvarchar(max)
-set @nsql=(SELECT  ';'+sql FROM #sql order by idx FOR XML PATH(''))
+
+ declare @nsql nvarchar(max)
+ set @nsql=(SELECT  ';'+sql FROM #sql order by idx FOR XML PATH(''))
  
 set @nsql= replace(replace(replace(@nsql,'[lt]','<'),'[rt]','>'),'[@]','&')
 
@@ -198,7 +196,6 @@ begin catch
 end catch
 
 print '总用时：'+ convert(varchar(10), datediff( ms, @execTime,SYSDATETIME()))+'毫秒'
-
 
 
 
