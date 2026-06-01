@@ -106,19 +106,23 @@ set @keyword_left= charindex('(',@sql_item)
 if (@keyword_left > 0) begin
 	declare @next_left int = 0
 	declare @next_right int = 0
+	insert into #filter(t,s) values('括号',@keyword_left)
 	while(@isWhile='y') begin		
 		set @next_left  = charindex('(',@sql_item,@keyword_left + 1)
 		set @next_right  = charindex(')',@sql_item,@keyword_left + 1)
 		if(@next_right = 0) begin
 			set @isWhile='n';
 		end else begin
-			if(@next_left<@next_right and @next_left <> 0) begin
-				insert into #filter(t,s) values('括号',@next_left)
-				set @keyword_left = @next_left+1
-			end else begin
-				update #filter set e=@next_right+1  where t='括号' and s=(select top 1 s from #filter where t='括号' and e is null order by s desc)
-				set @keyword_left = @next_right+1
-			end
+			-- 处理正常括号结尾及处理（包裹的情况
+			if( @next_left > @next_right or (@next_left = 0 and @next_right > @next_left) or @next_left < @next_right) begin
+				if( subString(@sql_item,@keyword_left+1,@next_right-@keyword_left) like '%(%') begin	
+					set @keyword_left = charindex('(',@sql_item,@keyword_left +1)
+					insert into #filter(t,s) values('括号', charindex('(',@sql_item,@keyword_left ))
+				end else begin
+					update #filter set e=@next_right+1 where t='括号' and s=(select top 1 s from #filter where t='括号' and e is null order by s desc)
+					set @keyword_left =@next_right
+				end
+			end  
 		end
 	end
 end
@@ -146,41 +150,37 @@ end
 
 declare @fromStartIndex int =0
 set @keyword  = charindex('from',@sql_item)
-if(@keyword > 0 ) begin	
-	set @isWhile='y'
-	while(@isWhile = 'y') begin
-		select @id=count(*) from #filter where @keyword>=s and @keyword<e
-		if(@id>0 and @keyword>0) begin
-			set @keyword = charindex('from',@sql_item,@keyword+2);
-		end else begin
-			set @isWhile='n';
-		end
+set @isWhile='y'
+while(@isWhile = 'y') begin
+	select @id=count(*) from #filter where @keyword>=s and @keyword<e
+
+	if(@id>0 and @keyword>0) begin
+		set @keyword = charindex('from',@sql_item,@keyword+2);
+	end else begin
+		set @isWhile='n';
 	end
-	set @fromStartIndex = @keyword-1;
- end else begin
-	set @fromStartIndex = @keyword-1;
- end
+end
+set @fromStartIndex = @keyword-1;
 
 
 set @keyword = charindex('order by',@sql_item);
-if( @keyword > 0 ) begin	
-	while(@keyword > 0) begin
-		select @id=id,@s=s,@e=e from #filter where @keyword>=s and @keyword<e
-		if((select count(*) from #filter where @keyword>=s and @keyword<e)=0) begin
-			set @id=0
-		end
-		if(@e>0 and @s>0 and @id>0) begin
-			set @keyword = charindex('order by',@sql_item,@e+1);	
-			delete #filter where id=@id
+while(@keyword > 0) begin
+	select @id=id,@s=s,@e=e from #filter where @keyword>=s and @keyword<e
+	if((select count(*) from #filter where @keyword>=s and @keyword<e)=0) begin
+		set @id=0
+	end
+	if(@e>0 and @s>0 and @id>0) begin
+		set @keyword = charindex('order by',@sql_item,@e+1);	
+		delete #filter where id=@id
+	end else begin
+		if(charindex('order by',@sql_item,@keyword+1)>0) begin
+			set @keyword = charindex('order by',@sql_item,@keyword+1);
 		end else begin
-			if(charindex('order by',@sql_item,@keyword+1)>0) begin
-				set @keyword = charindex('order by',@sql_item,@keyword+1);
-			end else begin
-				break;
-			end
+			break;
 		end
-	end	
-end
+	end
+end	
+
 declare @orderStartIndex int =0
 if( @keyword > 0 ) begin
 	set @orderStartIndex=@keyword
@@ -189,38 +189,66 @@ end
 print 'sql解析：'+ convert(varchar(10), datediff( ms, @itemTime,SYSDATETIME()))+'毫秒'
 
 
-declare @temp_sql varchar(4000)=''
-if(@orderStartIndex >0) begin
-	set @temp_sql= SUBSTRING(@sql_item,0,@orderStartIndex)
-end else begin
-	set @temp_sql= @sql_item
-end
+declare @temp_sql varchar(4000) = @sql_item
+
 
 select top 1 @sql_item=sql from #sql where idx=@idx
 
+
 begin try	
-	declare @tableName varchar(12)='#'+left(NewId(),8)
+	declare @tableName varchar(34)='#'+replace(NewId(),'-','')
+	
+	
+	set @sql_item = SUBSTRING(@sql_item,0,@fromStartIndex)+',IDENTITY(int,1,1) as N_7777 into '+@tableName+' '+SUBSTRING(@sql_item,@fromStartIndex,len(@sql_item))
+
+	insert into #sql(idx,sql) values(@idx+1,';declare @allSize int;set @allSize=@@ROWCOUNT')
+	insert into #sql(idx,sql) values(@idx+2,';select '+convert(nvarchar(10) ,@page)+' as page,'+convert(nvarchar(10) ,@size)+' as size,CEILING(@allSize/convert(float,'+convert(nvarchar(10) ,@size)+')) as allPage,@allSize as allSize')
+	insert into #sql(idx,sql) values(@idx+3,';select * from '+@tableName+' order by N_7777 offset '+convert(nvarchar(10) ,((@page - 1) * @size))+' row fetch next '+convert(nvarchar(10) ,@size)+' row only')
+	
+	update #sql set sql=@sql_item where idx=@idx
 	declare @execSql nvarchar(max)
-	set @execSql =ISNULL((SELECT  ';'+sql FROM #sql where idx <@idx order by idx FOR XML PATH('')),'')
-	set @execSql = @execSql + SUBSTRING(@sql_item,0,@fromStartIndex)+',IDENTITY(int,1,1) as N_7777 into '+@tableName+' '+SUBSTRING(@sql_item,@fromStartIndex,len(@sql_item))
-	set @execSql = replace(replace(replace(@execSql,'[lt]','<'),'[rt]','>'),'[@]','&')	
-	set @execSql = @execSql + ';select '+convert(nvarchar(10) ,@page)+' as page,'+convert(nvarchar(10) ,@size)+' as size,CEILING(count(*)/convert(float,'+convert(nvarchar(10) ,@size)+')) as allPage,count(*) as allSize from '+@tableName
-	set @execSql = @execSql + ';select * from '+@tableName+' order by N_7777 offset '+convert(nvarchar(10) ,((@page - 1) * @size))+' row fetch next '+convert(nvarchar(10) ,@size)+' row only'
-	print @execSql
+	 set @execSql=(SELECT  ';'+sql FROM #sql order by idx FOR XML PATH(''))
+ 
+	set @execSql= replace(replace(replace(@execSql,'[lt]','<'),'[rt]','>'),'[@]','&')
+	
 	exec sp_executesql @execSql	
-	print '使用临时表处理'
-	print '总用时：'+ convert(varchar(10), datediff( ms, @execTime,SYSDATETIME()))+'毫秒'
-	return;
+	print '使用临时表 总用时：'+ convert(varchar(10), datediff( ms, @execTime,SYSDATETIME()))+'毫秒'
+	return ;
 end try
 begin catch
-	insert into #sql(idx,sql) values(@idx-2,'declare @allSize int=0;select @allSize=count(*) from ('+@temp_sql+') as T7777')
-	insert into #sql(idx,sql) values(@idx-1,'select '+convert(nvarchar(10) ,@page)+' as page,'+convert(nvarchar(10) ,@size)+' as size,CEILING(@allSize/convert(float,'+convert(nvarchar(10) ,@size)+')) as allPage,@allSize as allSize ')
-	if(@orderStartIndex >0) begin
-		set @sql_item = @sql_item+' offset '+convert(nvarchar(10) ,((@page - 1) * @size))+' row fetch next '+convert(nvarchar(10) ,@size)+' row only'
-	end else begin
-		set @sql_item = @sql_item+' ORDER BY (SELECT 1) offset '+convert(nvarchar(10) ,((@page - 1) * @size))+' row fetch next '+convert(nvarchar(10) ,@size)+' row only'	
+	print convert(varchar(20), ERROR_NUMBER()) +' >>> '+ convert(varchar(800),ERROR_MESSAGE());
+	-- 临时表中存在自增列，额外再添加一个自增列
+	set @keyword  = charindex('select',@temp_sql,0)
+	set @keyword_left  = charindex('(',@temp_sql,0)
+	set @keyword_right  = charindex(')',@temp_sql,0)
+	declare @tmp varchar(50)
+	declare @distinctIndex int=0
+	declare @len int=0
+	declare @raw_sql varchar(max)=@temp_sql
+	while(@keyword>0 ) begin
+		set @tmp = subString(@temp_sql,@keyword,50)
+		if(@tmp not like '%top%' and (@keyword<@keyword_left or @keyword>@keyword_right) ) begin
+			set @len=6;
+			set @distinctIndex = charindex('distinct',@tmp,0);
+			if(@distinctIndex>0) begin set @len = 7 end
+			set @temp_sql = SUBSTRING(@temp_sql,0,@keyword)+ STUFF(@tmp, charindex('select',@tmp,0) + @distinctIndex+@len, 0, N' TOP 100 PERCENT ')+SUBSTRING(@temp_sql,@keyword+len(@tmp),99999)
+
+		end 
+		set @keyword = charindex('select',@temp_sql,@keyword_right+@keyword+6)
+		set @keyword_left  = charindex('(',@temp_sql,@keyword_left+1)
+		set @keyword_right  = charindex(')',@temp_sql,@keyword_right+1)
+		if(0 = @keyword) begin break; end
 	end
-	print '使用普通查询处理'
+	
+	delete #sql where idx > @idx
+	insert into #sql(idx,sql) values(@idx-3,'select * into '+@tableName+' from ('+@temp_sql+') as T7777')
+	insert into #sql(idx,sql) values(@idx-2,';declare @allSize int;set @allSize=@@ROWCOUNT')
+	insert into #sql(idx,sql) values(@idx-1,';select '+convert(nvarchar(10) ,@page)+' as page,'+convert(nvarchar(10) ,@size)+' as size,CEILING(@allSize/convert(float,'+convert(nvarchar(10) ,@size)+')) as allPage,@allSize as allSize')
+	if(@orderStartIndex >0) begin
+		set @sql_item = @raw_sql+' offset '+convert(nvarchar(10) ,((@page - 1) * @size))+' row fetch next '+convert(nvarchar(10) ,@size)+' row only'
+	end else begin
+		set @sql_item = @raw_sql+' ORDER BY (SELECT 1) offset '+convert(nvarchar(10) ,((@page - 1) * @size))+' row fetch next '+convert(nvarchar(10) ,@size)+' row only'	
+	end
 end catch
 
 
@@ -238,6 +266,7 @@ set @nsql= replace(replace(replace(@nsql,'[lt]','<'),'[rt]','>'),'[@]','&')
 
 print @nsql
 
+
 begin try
 	exec sp_executesql @nsql
 end try
@@ -250,12 +279,5 @@ begin catch
 	return ;
 end catch
 
-print '总用时：'+ convert(varchar(10), datediff( ms, @execTime,SYSDATETIME()))+'毫秒'
-
-
-
-
-
-
-
+print '使用普通查询 总用时：'+ convert(varchar(10), datediff( ms, @execTime,SYSDATETIME()))+'毫秒'
 
